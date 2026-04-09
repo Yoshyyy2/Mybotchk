@@ -69,10 +69,9 @@ def get_proxies():
 
 # Default Braintree sites
 DEFAULT_BRAINTREE_SITES = [
-    "https://bandc.com",
-    "https://www.easternmarine.com",
-    "https://universal-akb.com",
     "https://store.segway.com",
+    "https://universal-akb.com",
+    "https://www.easternmarine.com",
 ]
 
 user_sessions = {}
@@ -1332,6 +1331,6 @@ def send_help(message):
 
 if __name__ == '__main__':
     print("🚀 Braintree Bot started...")
-    print("✅ Using bandc.com as default site")
+    print("✅ Using store.segway.com as default site")
     print("💳 Commands: /bchk, /bmass, /bfile")
     bot.infinity_polling()
