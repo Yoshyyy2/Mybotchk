@@ -13,7 +13,7 @@ import os
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BOT_TOKEN = '8582065184:AAFsBa11_PyuWZVw_xr4rvoGhIerqiiUHDI'
+BOT_TOKEN = '8388599467:AAHpsWxvSma5U_QFMqOa-qilroPGO9m5hKk'
 ADMIN_ID = 5629984144
 bot = telebot.TeleBot(BOT_TOKEN)
 
