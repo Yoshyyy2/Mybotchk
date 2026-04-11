@@ -122,7 +122,7 @@ def get_proxies():
         return {'http': ACTIVE_PROXY, 'https': ACTIVE_PROXY} if ACTIVE_PROXY else None
 
 DEFAULT_BRAINTREE_SITE = "https://www.coca-colastore.com"
-JOSS_API = "https://my-api-1-smz1.onrender.com"
+JOSS_API = "https://jossalicious.org/b3/api/wpg.php"
 
 user_sessions = {}
 user_cooldowns = {}
