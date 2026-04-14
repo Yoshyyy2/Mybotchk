@@ -1181,10 +1181,17 @@ if __name__ == '__main__':
     print("✅ WebShare proxy format supported!")
     print("✅ Format: host:port:username:password")
     print("🔥 Optimized for SPEED - No retries, instant response!")
-    
-    try:
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
-    except Exception as e:
-        print(f"Bot error: {e}")
-        time.sleep(5)
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+
+    while True:
+        try:
+            print("🔄 Starting polling...")
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"❌ Bot crashed: {e}")
+            print("⏳ Restarting in 5 seconds...")
+            try:
+                bot.stop_polling()
+            except:
+                pass
+            time.sleep(5)
+            print("🔄 Reconnecting...")
