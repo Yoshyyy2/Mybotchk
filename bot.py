@@ -1192,36 +1192,18 @@ def webhook():
     return '', 403
 
 if __name__ == '__main__':
-    print("🚀 Braintree Bot started!")
-    print(f"⚡ SUPER FAST: {MAX_WORKERS} parallel workers")
-    print(f"⏱️ Cooldowns: {COOLDOWN_CHECK}s check, {COOLDOWN_MASS}s mass")
-    print(f"📦 Max cards: {MAX_MASS_CARDS} mass, {MAX_FILE_CARDS} file")
-    print("✅ WebShare proxy format supported!")
-    print("✅ Format: host:port:username:password")
-    print("🔥 Optimized for SPEED - No retries, instant response!")
+    print("🚀 Braintree Bot started (WEBHOOK MODE)")
 
-    # Remove old webhook and set new one
     bot.remove_webhook()
     time.sleep(1)
 
-    if WEBHOOK_URL:
-        bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        print(f"✅ Webhook set: {WEBHOOK_URL}/webhook")
-    else:
-        print("⚠️ No WEBHOOK_URL set, falling back to polling...")
-        while True:
-            try:
-                print("🔄 Starting polling...")
-                bot.infinity_polling(
-                    timeout=60,
-                    long_polling_timeout=30,
-                    skip_pending=True,
-                    allowed_updates=["message", "callback_query"]
-                )
-            except Exception as e:
-                print(f"❌ Bot crashed: {e}")
-                time.sleep(3)
+    if not WEBHOOK_URL:
+        print("❌ WEBHOOK_URL not set!")
+        exit()
+
+    bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    print(f"✅ Webhook set: {WEBHOOK_URL}/webhook")
 
     PORT = int(os.environ.get('PORT', 8080))
     print(f"🌐 Starting Flask on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT)
