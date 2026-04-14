@@ -20,7 +20,7 @@ ADMIN_ID = 5629984144
 bot = telebot.TeleBot(BOT_TOKEN, num_threads=10, skip_pending=True)
 
 USERS_FILE = 'users.json'
-MAX_WORKERS = 20  # For parallel processing
+MAX_WORKERS = 10  # For parallel processing
 
 def load_users():
     if os.path.exists(USERS_FILE):
@@ -132,7 +132,7 @@ COOLDOWN_CHECK = 3  # Faster - reduced from 5
 COOLDOWN_MASS = 5   # Faster - reduced from 10
 MAX_MASS_CARDS = 15  # Increased from 10
 MAX_FILE_CARDS = 500
-MAX_WORKERS = 30  # Increased from 20 for faster parallel processing
+MAX_WORKERS = 10  # Increased from 20 for faster parallel processing
 HANDYAPI_KEY = "HAS-0YZN9rhQvH74X3Gu9BgVx0wyJns"
 
 def get_card_info(card_number):
@@ -337,7 +337,7 @@ class BraintreeChecker:
                 params=params,
                 proxies=get_proxies(),
                 verify=False,
-                timeout=35,  # Reduced from 45
+                timeout=15,  # Reduced from 45
                 stream=False  # Don't stream, get full response faster
             )
             
@@ -1184,19 +1184,17 @@ if __name__ == '__main__':
 
     while True:
         try:
-            print("🔄 Starting polling...")
+            print("🔄 Starting polling (optimized)...")
             bot.infinity_polling(
-                timeout=20,
-                long_polling_timeout=5,
-                skip_pending=True,
-                allowed_updates=["message", "callback_query"]
+                timeout=60,
+                long_polling_timeout=30,
+                skip_pending=True
             )
         except Exception as e:
-            print(f"❌ Bot crashed: {e}")
-            print("⏳ Restarting in 3 seconds...")
+            print(f"❌ Polling crashed: {e}")
             try:
                 bot.stop_polling()
             except:
                 pass
-            time.sleep(3)
-            print("🔄 Reconnecting...")
+            print("♻️ Restarting in 5 seconds...")
+            time.sleep(5)
