@@ -12,15 +12,16 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
+from flask import Flask, request
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BOT_TOKEN = '8770871462:AAFrOsWeGQxHVdjQ0SUbTJaODAFLKDPD1jE'
+BOT_TOKEN = '8697305127:AAGfU9e2ZH8uRGmsNZnbjLcFwipB_XO_wk8'
 ADMIN_ID = 5629984144
 bot = telebot.TeleBot(BOT_TOKEN, num_threads=10, skip_pending=True)
 
 USERS_FILE = 'users.json'
-MAX_WORKERS = 10  # For parallel processing
+MAX_WORKERS = 20  # For parallel processing
 
 def load_users():
     if os.path.exists(USERS_FILE):
@@ -132,7 +133,7 @@ COOLDOWN_CHECK = 3  # Faster - reduced from 5
 COOLDOWN_MASS = 5   # Faster - reduced from 10
 MAX_MASS_CARDS = 15  # Increased from 10
 MAX_FILE_CARDS = 500
-MAX_WORKERS = 10  # Increased from 20 for faster parallel processing
+MAX_WORKERS = 30  # Increased from 20 for faster parallel processing
 HANDYAPI_KEY = "HAS-0YZN9rhQvH74X3Gu9BgVx0wyJns"
 
 def get_card_info(card_number):
@@ -337,7 +338,7 @@ class BraintreeChecker:
                 params=params,
                 proxies=get_proxies(),
                 verify=False,
-                timeout=15,  # Reduced from 45
+                timeout=35,  # Reduced from 45
                 stream=False  # Don't stream, get full response faster
             )
             
@@ -1173,6 +1174,23 @@ def send_help(message):
     except Exception as e:
         print(f"help error: {e}")
 
+app = Flask(__name__)
+
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', '')  # Set this in Render env vars
+
+@app.route('/', methods=['GET'])
+def index():
+    return '🚀 Braintree Bot is running!', 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    return '', 403
+
 if __name__ == '__main__':
     print("🚀 Braintree Bot started!")
     print(f"⚡ SUPER FAST: {MAX_WORKERS} parallel workers")
@@ -1182,19 +1200,29 @@ if __name__ == '__main__':
     print("✅ Format: host:port:username:password")
     print("🔥 Optimized for SPEED - No retries, instant response!")
 
-    while True:
-        try:
-            print("🔄 Starting polling (optimized)...")
-            bot.infinity_polling(
-                timeout=60,
-                long_polling_timeout=30,
-                skip_pending=True
-            )
-        except Exception as e:
-            print(f"❌ Polling crashed: {e}")
+    # Remove old webhook and set new one
+    bot.remove_webhook()
+    time.sleep(1)
+
+    if WEBHOOK_URL:
+        bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        print(f"✅ Webhook set: {WEBHOOK_URL}/webhook")
+    else:
+        print("⚠️ No WEBHOOK_URL set, falling back to polling...")
+        while True:
             try:
-                bot.stop_polling()
-            except:
-                pass
-            print("♻️ Restarting in 5 seconds...")
-            time.sleep(5)
+                print("🔄 Starting polling...")
+                bot.infinity_polling(
+                    timeout=20,
+                    long_polling_timeout=5,
+                    skip_pending=True,
+                    allowed_updates=["message", "callback_query"]
+                )
+            except Exception as e:
+                print(f"❌ Bot crashed: {e}")
+                time.sleep(3)
+
+    PORT = int(os.environ.get('PORT', 8080))
+    print(f"🌐 Starting Flask on port {PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False)
+            print("🔄 Reconnecting...")
