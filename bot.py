@@ -133,7 +133,7 @@ COOLDOWN_CHECK = 3  # Faster - reduced from 5
 COOLDOWN_MASS = 5   # Faster - reduced from 10
 MAX_MASS_CARDS = 15  # Increased from 10
 MAX_FILE_CARDS = 500
-MAX_WORKERS = 30  # Increased from 20 for faster parallel processing
+MAX_WORKERS = 10  # Increased from 20 for faster parallel processing
 HANDYAPI_KEY = "HAS-0YZN9rhQvH74X3Gu9BgVx0wyJns"
 
 def get_card_info(card_number):
@@ -338,7 +338,7 @@ class BraintreeChecker:
                 params=params,
                 proxies=get_proxies(),
                 verify=False,
-                timeout=35,  # Reduced from 45
+                timeout=15,  # Reduced from 45
                 stream=False  # Don't stream, get full response faster
             )
             
@@ -1213,8 +1213,8 @@ if __name__ == '__main__':
             try:
                 print("🔄 Starting polling...")
                 bot.infinity_polling(
-                    timeout=20,
-                    long_polling_timeout=5,
+                    timeout=60,
+                    long_polling_timeout=30,
                     skip_pending=True,
                     allowed_updates=["message", "callback_query"]
                 )
@@ -1225,4 +1225,3 @@ if __name__ == '__main__':
     PORT = int(os.environ.get('PORT', 8080))
     print(f"🌐 Starting Flask on port {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
-            print("🔄 Reconnecting...")
