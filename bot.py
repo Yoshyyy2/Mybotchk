@@ -17,7 +17,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BOT_TOKEN = '8770871462:AAFrOsWeGQxHVdjQ0SUbTJaODAFLKDPD1jE'
 ADMIN_ID = 5629984144
-bot = telebot.TeleBot(BOT_TOKEN, num_threads=10)
+bot = telebot.TeleBot(BOT_TOKEN, num_threads=10, skip_pending=True)
 
 USERS_FILE = 'users.json'
 MAX_WORKERS = 20  # For parallel processing
@@ -1185,13 +1185,18 @@ if __name__ == '__main__':
     while True:
         try:
             print("🔄 Starting polling...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+            bot.infinity_polling(
+                timeout=20,
+                long_polling_timeout=5,
+                skip_pending=True,
+                allowed_updates=["message", "callback_query"]
+            )
         except Exception as e:
             print(f"❌ Bot crashed: {e}")
-            print("⏳ Restarting in 5 seconds...")
+            print("⏳ Restarting in 3 seconds...")
             try:
                 bot.stop_polling()
             except:
                 pass
-            time.sleep(5)
+            time.sleep(3)
             print("🔄 Reconnecting...")
